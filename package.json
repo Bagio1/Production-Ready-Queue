@@ -9,7 +9,8 @@
     "start:retry": "cross-env PORT=3002 node src/consumer/retry/index.js",
     "start:deadletter": "cross-env PORT=3003 node src/consumer/deadLetter/index.js",
     "compose:up": "docker compose up --build",
-    "compose:down": "docker compose down"
+    "compose:down": "docker compose down",
+    "test": "node test.js"
   },
   "dependencies": {
     "amqplib": "^2.0.1",
