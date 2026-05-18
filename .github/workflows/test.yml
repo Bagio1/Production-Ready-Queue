@@ -1,0 +1,112 @@
+name: Test
+
+on:
+  push:
+    branches:
+      - master
+      - main
+  pull_request:
+    branches:
+      - master
+      - main
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+
+    services:
+      rabbitmq:
+        image: rabbitmq:3-management
+        ports:
+          - 5672:5672
+          - 15672:15672
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: queue_system
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d queue_system"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      RABBITMQ_URL: amqp://localhost:5672
+      PGHOST: localhost
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: queue_system
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Start queue services
+        shell: bash
+        run: |
+          npm run start:producer > producer.log 2>&1 &
+          npm run start:main > main-consumer.log 2>&1 &
+          npm run start:retry > retry-consumer.log 2>&1 &
+          npm run start:deadletter > deadletter-consumer.log 2>&1 &
+
+      - name: Wait for health checks
+        shell: bash
+        run: |
+          for url in \
+            http://localhost:3000/health \
+            http://localhost:3001/health \
+            http://localhost:3002/health \
+            http://localhost:3003/health
+          do
+            echo "Waiting for $url"
+            for attempt in {1..30}
+            do
+              if curl --fail --silent "$url" > /dev/null
+              then
+                echo "$url is healthy"
+                break
+              fi
+
+              if [ "$attempt" -eq 30 ]
+              then
+                echo "$url did not become healthy"
+                exit 1
+              fi
+
+              sleep 2
+            done
+          done
+
+      - name: Run integration tests
+        run: npm test
+
+      - name: Upload service logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: service-logs
+          path: |
+            producer.log
+            main-consumer.log
+            retry-consumer.log
+            deadletter-consumer.log
