@@ -34,6 +34,6 @@ module.exports = {
     port: Number(process.env.PGPORT || 5432),
     user: process.env.PGUSER || 'postgres',
     password: process.env.PGPASSWORD || 'postgres',
-    database: process.env.PGDATABASE || 'queue_app'
+    database: process.env.PGDATABASE || 'queue_system'
   }
 };

@@ -20,7 +20,7 @@ services:
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: queue_app
+      POSTGRES_DB: queue_system
     ports:
       - "5432:5432"
     healthcheck:
@@ -42,7 +42,7 @@ services:
       PGHOST: postgres
       PGUSER: postgres
       PGPASSWORD: postgres
-      PGDATABASE: queue_app
+      PGDATABASE: queue_system
       PORT: 3000
     ports:
       - "3000:3000"
@@ -60,7 +60,7 @@ services:
       PGHOST: postgres
       PGUSER: postgres
       PGPASSWORD: postgres
-      PGDATABASE: queue_app
+      PGDATABASE: queue_system
       PORT: 3001
     ports:
       - "3001:3001"
@@ -78,7 +78,7 @@ services:
       PGHOST: postgres
       PGUSER: postgres
       PGPASSWORD: postgres
-      PGDATABASE: queue_app
+      PGDATABASE: queue_system
       PORT: 3002
     ports:
       - "3002:3002"
@@ -96,7 +96,7 @@ services:
       PGHOST: postgres
       PGUSER: postgres
       PGPASSWORD: postgres
-      PGDATABASE: queue_app
+      PGDATABASE: queue_system
       PORT: 3003
     ports:
       - "3003:3003"

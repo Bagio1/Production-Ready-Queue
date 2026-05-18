@@ -9,6 +9,7 @@ const http = require('http');
 const amqp = require('amqplib');
 const { Client } = require('pg');
 const { v4: uuidv4 } = require('uuid');
+const { initializeDatabase, closePool } = require('./src/db');
 
 const config = {
   rabbitmq: {
@@ -16,11 +17,11 @@ const config = {
     port: process.env.RABBITMQ_PORT || 5672,
   },
   postgres: {
-    host: process.env.POSTGRES_HOST || 'localhost',
-    port: process.env.POSTGRES_PORT || 5432,
-    database: process.env.POSTGRES_DB || 'queue_db',
-    user: process.env.POSTGRES_USER || 'postgres',
-    password: process.env.POSTGRES_PASSWORD || 'postgres',
+    host: process.env.POSTGRES_HOST || process.env.PGHOST || 'localhost',
+    port: Number(process.env.POSTGRES_PORT || process.env.PGPORT || 5432),
+    database: process.env.POSTGRES_DB || process.env.PGDATABASE || 'queue_system',
+    user: process.env.POSTGRES_USER || process.env.PGUSER || 'postgres',
+    password: process.env.POSTGRES_PASSWORD || process.env.PGPASSWORD || 'postgres',
   },
   services: {
     producer: 'http://localhost:3000/health',
@@ -125,18 +126,20 @@ async function testRabbitMQConnection() {
 async function testPostgresConnection() {
   console.log('\n📋 Test 3: PostgreSQL Connection & Schema');
   try {
+    await initializeDatabase();
+
     const client = new Client(config.postgres);
     await client.connect();
 
     const result = await client.query(
-      "SELECT table_name FROM information_schema.tables WHERE table_name='processed_messages';"
+      "SELECT table_name FROM information_schema.tables WHERE table_name='messages';"
     );
 
     if (result.rows.length > 0) {
       console.log('  ✅ Connected to PostgreSQL');
-      console.log('  ✅ processed_messages table exists');
+      console.log('  ✅ messages table exists');
 
-      const countResult = await client.query('SELECT COUNT(*) FROM processed_messages;');
+      const countResult = await client.query('SELECT COUNT(*) FROM messages;');
       console.log(`  ℹ️  Total messages in DB: ${countResult.rows[0].count}`);
 
       testsPassed++;
@@ -202,7 +205,7 @@ async function testEndToEndProcessing() {
     const client = new Client(config.postgres);
     await client.connect();
 
-    const initialCount = await client.query('SELECT COUNT(*) FROM processed_messages;');
+    const initialCount = await client.query('SELECT COUNT(*) FROM messages;');
     const initialTotal = parseInt(initialCount.rows[0].count);
 
     console.log(`  ℹ️  Initial message count: ${initialTotal}`);
@@ -210,7 +213,7 @@ async function testEndToEndProcessing() {
     // Wait for message processing
     await new Promise((resolve) => setTimeout(resolve, 10000));
 
-    const finalCount = await client.query('SELECT COUNT(*) FROM processed_messages;');
+    const finalCount = await client.query('SELECT COUNT(*) FROM messages;');
     const finalTotal = parseInt(finalCount.rows[0].count);
 
     console.log(`  ℹ️  Final message count: ${finalTotal}`);
@@ -284,6 +287,7 @@ async function runTests() {
   console.log(`║  Tests Failed: ${testsFailed}                                                  ║`);
   console.log('╚════════════════════════════════════════════════════════════════╝\n');
 
+  await closePool();
   process.exit(testsFailed > 0 ? 1 : 0);
 }
 
