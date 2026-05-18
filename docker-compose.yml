@@ -1,0 +1,102 @@
+version: "3.9"
+services:
+  rabbitmq:
+    image: rabbitmq:3-management
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "status"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  postgres:
+    image: postgres:15
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: queue_app
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  producer:
+    build: .
+    command: node src/producer.js
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    environment:
+      RABBITMQ_URL: amqp://rabbitmq:5672
+      PGHOST: postgres
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: queue_app
+      PORT: 3000
+    ports:
+      - "3000:3000"
+
+  main-consumer:
+    build: .
+    command: node src/mainConsumer.js
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    environment:
+      RABBITMQ_URL: amqp://rabbitmq:5672
+      PGHOST: postgres
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: queue_app
+      PORT: 3001
+    ports:
+      - "3001:3001"
+
+  retry-consumer:
+    build: .
+    command: node src/retryConsumer.js
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    environment:
+      RABBITMQ_URL: amqp://rabbitmq:5672
+      PGHOST: postgres
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: queue_app
+      PORT: 3002
+    ports:
+      - "3002:3002"
+
+  deadletter-consumer:
+    build: .
+    command: node src/deadLetterConsumer.js
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    environment:
+      RABBITMQ_URL: amqp://rabbitmq:5672
+      PGHOST: postgres
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: queue_app
+      PORT: 3003
+    ports:
+      - "3003:3003"

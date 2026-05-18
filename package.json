@@ -1,0 +1,22 @@
+{
+  "name": "queue-system-lab4",
+  "version": "1.0.0",
+  "description": "Production-ready RabbitMQ queue system with retry and dead letter tiers",
+  "type": "commonjs",
+  "scripts": {
+    "start:producer": "cross-env PORT=3000 node src/producer/index.js",
+    "start:main": "cross-env PORT=3001 node src/consumer/main/index.js",
+    "start:retry": "cross-env PORT=3002 node src/consumer/retry/index.js",
+    "start:deadletter": "cross-env PORT=3003 node src/consumer/deadLetter/index.js",
+    "compose:up": "docker compose up --build",
+    "compose:down": "docker compose down"
+  },
+  "dependencies": {
+    "amqplib": "^2.0.1",
+    "pg": "^8.11.0",
+    "uuid": "^9.0.0"
+  },
+  "devDependencies": {
+    "cross-env": "^10.1.0"
+  }
+}
