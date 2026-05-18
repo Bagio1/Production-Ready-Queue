@@ -143,7 +143,7 @@ async function insertMessage(content, status = 'success', retryCount = 0) {
   const result = await query(
     `
       INSERT INTO messages (content, status, retry_count, processed_at)
-      VALUES ($1, $2, $3, CASE WHEN $2 = 'success' THEN CURRENT_TIMESTAMP ELSE NULL END)
+      VALUES ($1, $2::VARCHAR, $3, CASE WHEN $2::VARCHAR = 'success' THEN CURRENT_TIMESTAMP ELSE NULL END)
       RETURNING *
     `,
     [message.content, message.status, message.retryCount]
@@ -156,9 +156,9 @@ async function updateMessageStatus(id, status, retryCount = 0) {
   const result = await query(
     `
       UPDATE messages
-      SET status = $2,
+      SET status = $2::VARCHAR,
           retry_count = $3,
-          processed_at = CASE WHEN $2 = 'success' THEN CURRENT_TIMESTAMP ELSE processed_at END
+          processed_at = CASE WHEN $2::VARCHAR = 'success' THEN CURRENT_TIMESTAMP ELSE processed_at END
       WHERE id = $1
       RETURNING *
     `,

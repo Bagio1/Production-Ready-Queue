@@ -9,7 +9,16 @@ const http = require('http');
 const amqp = require('amqplib');
 const { Client } = require('pg');
 const { v4: uuidv4 } = require('uuid');
-const { initializeDatabase, closePool } = require('./src/db');
+const {
+  initializeDatabase,
+  insertMessage,
+  updateMessageStatus,
+  getFailedMessages,
+  getMessageById,
+  deleteMessage,
+  getAllMessages,
+  closePool,
+} = require('./src/db');
 
 const config = {
   rabbitmq: {
@@ -33,6 +42,7 @@ const config = {
 
 let testsPassed = 0;
 let testsFailed = 0;
+let publishedMessageId = null;
 
 /**
  * Helper function to make HTTP requests
@@ -55,6 +65,25 @@ function makeRequest(url) {
       });
     }).on('error', reject);
   });
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForCondition(check, timeoutMs = 10000, intervalMs = 500) {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    const result = await check();
+    if (result) {
+      return result;
+    }
+
+    await sleep(intervalMs);
+  }
+
+  return null;
 }
 
 /**
@@ -169,17 +198,22 @@ async function testProducerMessage() {
       id: uuidv4(),
       type: 'test',
       timestamp: new Date().toISOString(),
-      data: { test: true, value: Math.random() },
+      payload: { test: true, value: Math.random() },
     };
 
     await channel.assertQueue('main.queue', { durable: true });
     const sent = channel.sendToQueue(
       'main.queue',
       Buffer.from(JSON.stringify(testMessage)),
-      { persistent: true }
+      {
+        contentType: 'application/json',
+        persistent: true,
+        headers: { 'x-retry-count': 0 },
+      }
     );
 
     if (sent) {
+      publishedMessageId = testMessage.id;
       console.log(`  ✅ Test message sent to main.queue`);
       console.log(`  ℹ️  Message ID: ${testMessage.id}`);
       testsPassed++;
@@ -200,8 +234,12 @@ async function testProducerMessage() {
  * Test 5: End-to-End Processing (with timeout)
  */
 async function testEndToEndProcessing() {
-  console.log('\n📋 Test 5: End-to-End Processing (waiting 10 seconds)');
+  console.log('\n📋 Test 5: End-to-End Processing');
   try {
+    if (!publishedMessageId) {
+      throw new Error('No published message ID available from Test 4');
+    }
+
     const client = new Client(config.postgres);
     await client.connect();
 
@@ -210,24 +248,27 @@ async function testEndToEndProcessing() {
 
     console.log(`  ℹ️  Initial message count: ${initialTotal}`);
 
-    // Wait for message processing
-    await new Promise((resolve) => setTimeout(resolve, 10000));
+    const processedMessage = await waitForCondition(async () => {
+      const result = await client.query(
+        "SELECT * FROM messages WHERE content LIKE $1 AND status = 'success' LIMIT 1;",
+        [`%${publishedMessageId}%`]
+      );
+
+      return result.rows[0] || null;
+    }, 10000);
+
+    if (!processedMessage) {
+      throw new Error(`Message ${publishedMessageId} was not persisted as successful`);
+    }
 
     const finalCount = await client.query('SELECT COUNT(*) FROM messages;');
     const finalTotal = parseInt(finalCount.rows[0].count);
 
     console.log(`  ℹ️  Final message count: ${finalTotal}`);
     console.log(`  ℹ️  Messages processed: ${finalTotal - initialTotal}`);
-
-    if (finalTotal > initialTotal) {
-      console.log('  ✅ Messages were processed successfully');
-      testsPassed++;
-      console.log('  Result: PASSED ✓');
-    } else {
-      console.log('  ⚠️  No new messages processed (queue may be empty or system slow)');
-      testsPassed++;
-      console.log('  Result: PASSED ✓ (expected behavior if no messages in queue)');
-    }
+    console.log(`  ✅ Message ${publishedMessageId} was persisted successfully`);
+    testsPassed++;
+    console.log('  Result: PASSED ✓');
 
     await client.end();
   } catch (error) {
@@ -237,10 +278,67 @@ async function testEndToEndProcessing() {
 }
 
 /**
- * Test 6: Queue Statistics
+ * Test 6: PostgreSQL CRUD Helpers
+ */
+async function testDatabaseCrudHelpers() {
+  console.log('\n📋 Test 6: PostgreSQL CRUD Helpers');
+  try {
+    const content = `crud-test-${uuidv4()}`;
+
+    const inserted = await insertMessage(content, 'retry', 2);
+    if (!inserted || inserted.content !== content || inserted.status !== 'retry') {
+      throw new Error('insertMessage did not return the inserted retry message');
+    }
+
+    const fetched = await getMessageById(inserted.id);
+    if (!fetched || fetched.id !== inserted.id) {
+      throw new Error('getMessageById did not return the inserted message');
+    }
+
+    const failedMessages = await getFailedMessages(20, 0);
+    if (!failedMessages.some((message) => message.id === inserted.id)) {
+      throw new Error('getFailedMessages did not include the unprocessed retry message');
+    }
+
+    const updated = await updateMessageStatus(inserted.id, 'success', 3);
+    if (!updated || updated.status !== 'success' || !updated.processed_at) {
+      throw new Error('updateMessageStatus did not mark the message as successful');
+    }
+
+    const allMessages = await getAllMessages(20, 0);
+    if (!allMessages.some((message) => message.id === inserted.id)) {
+      throw new Error('getAllMessages did not include the updated message');
+    }
+
+    const deleted = await deleteMessage(inserted.id);
+    if (!deleted || deleted.id !== inserted.id) {
+      throw new Error('deleteMessage did not return the deleted message');
+    }
+
+    const afterDelete = await getMessageById(inserted.id);
+    if (afterDelete) {
+      throw new Error('deleteMessage did not remove the message');
+    }
+
+    console.log('  ✅ insertMessage works');
+    console.log('  ✅ getMessageById works');
+    console.log('  ✅ getFailedMessages works');
+    console.log('  ✅ updateMessageStatus works');
+    console.log('  ✅ getAllMessages works');
+    console.log('  ✅ deleteMessage works');
+    testsPassed++;
+    console.log('  Result: PASSED ✓');
+  } catch (error) {
+    testsFailed++;
+    console.log(`  ❌ Error: ${error.message}`);
+  }
+}
+
+/**
+ * Test 7: Queue Statistics
  */
 async function testQueueStatistics() {
-  console.log('\n📋 Test 6: Queue Statistics');
+  console.log('\n📋 Test 7: Queue Statistics');
   try {
     const url = `amqp://${config.rabbitmq.host}:${config.rabbitmq.port}`;
     const connection = await amqp.connect(url);
@@ -280,6 +378,7 @@ async function runTests() {
   await testPostgresConnection();
   await testProducerMessage();
   await testEndToEndProcessing();
+  await testDatabaseCrudHelpers();
   await testQueueStatistics();
 
   console.log('\n╔════════════════════════════════════════════════════════════════╗');
