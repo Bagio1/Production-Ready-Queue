@@ -1,37 +1,102 @@
 # Production-Ready Queue System
 
-This project implements a three-tier RabbitMQ queue architecture with PostgreSQL storage.
+A 3-tier RabbitMQ queue that never silently drops a message.
+
+In a simple queue, one message that keeps failing can be retried forever and block everything behind it. This project separates failures into tiers: fast retries first, slower retries with exponential backoff next, and a dead-letter queue last, where failed messages are parked, logged and retried later instead of being lost. Every message's status is tracked in PostgreSQL.
+
+**Stack:** Node.js · RabbitMQ (amqplib) · PostgreSQL · Docker Compose
+
+## How it works
+
+```
+Producer (1 msg/sec)
+      │
+      ▼
+┌──────────────┐  fails 3×   ┌──────────────┐  fails 5×   ┌──────────────────┐
+│  main.queue  │ ──────────► │ retry.queue  │ ──────────► │ deadletter.queue │
+│  3 attempts  │             │  backoff     │             │  retry every 15s │
+└──────────────┘             └──────────────┘             └──────────────────┘
+        │                           │                              │
+        └───────────────────────────┴──────────────────────────────┘
+                                    ▼
+                    PostgreSQL: status + retry_count per message
+```
+
+| Tier | Queue | Attempts | Delay |
+| --- | --- | --- | --- |
+| 1. Main | `main.queue` | up to 3 | immediate |
+| 2. Retry | `retry.queue` | up to 5 | exponential: 10s, 20s, 40s, 80s, 160s |
+| 3. Dead letter | `deadletter.queue` | unlimited | every 15s, with full logging |
+
+Delays are implemented with delay queues (`retry.delay.queue`, `deadletter.delay.queue`) on a single exchange (`app.exchange`). All values are in `src/config.js`.
 
 ## Services
-- `producer` on port `3000`: sends a new message every 1 second.
-- `main-consumer` on port `3001`: primary processing tier.
-- `retry-consumer` on port `3002`: transient retry handling.
-- `deadletter-consumer` on port `3003`: logs unprocessable messages and retries indefinitely.
 
-## Setup
-1. Build and start the stack:
-   ```bash
-   docker compose up --build
-   ```
+| Service | Port | Role |
+| --- | --- | --- |
+| `producer` | 3000 | publishes one message per second |
+| `main-consumer` | 3001 | primary processing tier |
+| `retry-consumer` | 3002 | backoff retries |
+| `deadletter-consumer` | 3003 | parks, logs and re-queues permanent failures |
+| `rabbitmq` | 5672 / 15672 | broker + management UI |
+| `postgres` | 5432 | message status storage |
 
-2. Visit RabbitMQ management:
-   - http://localhost:15672
-   - default user: `guest`, password: `guest`
+Each Node service exposes `GET /health` for health checks.
 
-3. Check service status:
-   - Producer: http://localhost:3000
-   - Primary consumer: http://localhost:3001
-   - Retry consumer: http://localhost:3002
-   - Dead-letter consumer: http://localhost:3003
+## Run it
 
-## Queues and routing
-- `main.queue` receives producer messages.
-- Failed messages are retried in the main tier up to 3 attempts.
-- After 3 failures, messages move to `retry.queue`.
-- Retry queue uses exponential backoff and retries up to 5 attempts.
-- Permanent failures move to `deadletter.queue`.
-- Dead letter queue logs message details and requeues them every 15 seconds.
+```bash
+docker compose up --build
+```
 
-## Database schema
-The app creates the following table on startup:
-- `processed_messages(id uuid PRIMARY KEY, payload jsonb, created_at timestamptz NOT NULL DEFAULT NOW())`
+Then open:
+
+- RabbitMQ management: http://localhost:15672 (local default login `guest` / `guest`)
+- Service status: http://localhost:3000/health … http://localhost:3003/health
+
+Stop everything with `docker compose down`.
+
+## Database
+
+The `messages` table is created on startup:
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | `SERIAL` | primary key |
+| `content` | `TEXT` | message payload |
+| `retry_count` | `INTEGER` | attempts so far |
+| `status` | `VARCHAR(20)` | `success`, `retry` or `dead_letter` |
+| `created_at` | `TIMESTAMP` | when it was stored |
+| `processed_at` | `TIMESTAMP` | when processing finished |
+
+Database queries themselves retry with a short backoff, so a brief PostgreSQL hiccup doesn't lose a status update.
+
+## Tests
+
+With the stack running:
+
+```bash
+npm install
+npm test
+```
+
+`test.js` is an integration suite that checks the producer, the three consumers, RabbitMQ and PostgreSQL together.
+
+## Project structure
+
+```
+src/
+├── config.js            # queues, routing keys, retry limits, delays
+├── rabbitmq.js          # connection, exchange and queue setup
+├── db.js                # PostgreSQL pool, schema, queries
+├── statusServer.js      # /health endpoint for each service
+├── producer/
+└── consumer/
+    ├── main/
+    ├── retry/
+    └── deadLetter/
+```
+
+## Author
+
+Mohamed Fouhamy · [bagio.dev](https://bagio.dev) · [LinkedIn](https://www.linkedin.com/in/moxa-f/)
