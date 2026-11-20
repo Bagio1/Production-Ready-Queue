@@ -31,7 +31,7 @@ services:
 
   producer:
     build: .
-    command: node src/producer.js
+    command: node src/producer/index.js
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -49,7 +49,7 @@ services:
 
   main-consumer:
     build: .
-    command: node src/mainConsumer.js
+    command: node src/consumer/main/index.js
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -67,7 +67,7 @@ services:
 
   retry-consumer:
     build: .
-    command: node src/retryConsumer.js
+    command: node src/consumer/retry/index.js
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -85,7 +85,7 @@ services:
 
   deadletter-consumer:
     build: .
-    command: node src/deadLetterConsumer.js
+    command: node src/consumer/deadLetter/index.js
     depends_on:
       rabbitmq:
         condition: service_healthy
