@@ -5,4 +5,4 @@ RUN npm install --production
 COPY . ./
 RUN mkdir -p logs
 EXPOSE 3000 3001 3002 3003
-CMD ["node", "src/producer.js"]
+CMD ["node", "src/producer/index.js"]
